@@ -31,8 +31,9 @@ void MeasTask(void * params){
 			taskYIELD();
 		}
 
-		//update to a new channel/group
-		if(++chan > NUM_CHANNELS) chan = 0;
+		//update to a new channel/group. Channels are 0..NUM_CHANNELS-1; the old
+		//'>' here visited channels[NUM_CHANNELS], one past the array, every cycle.
+		if(++chan >= NUM_CHANNELS) chan = 0;
 	}
 }
 
@@ -58,7 +59,8 @@ void RTDTask(void * params){
 			taskYIELD();
 		}
 
-		//update to a new channel/group
-		if(++chan > NUM_CHANNELS) chan = 0;
+		//update to a new channel/group. Channels are 0..NUM_CHANNELS-1; the old
+		//'>' here visited channels[NUM_CHANNELS], one past the array, every cycle.
+		if(++chan >= NUM_CHANNELS) chan = 0;
 	}
 }

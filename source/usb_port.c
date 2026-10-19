@@ -118,6 +118,13 @@ void USB_DeviceIsrEnable(void)
     NVIC_EnableIRQ(USB1_IRQn);
 }
 
+void USBStop(void)
+{
+    if(s_cdcVcom.deviceHandle != NULL){
+        USB_DeviceStop(s_cdcVcom.deviceHandle);
+    }
+}
+
 void USBTxTask(void * params){
 	uint32_t bytes;
 	usb_status_t err;
