@@ -4,3 +4,12 @@
 .vscode
 /Release/
 .DS_Store
+
+# Claude device-local memory + fleet-link inbox (see ~/SPARC/CLAUDE.md → "Claude memory & SPARC Fleet Link")
+Claude/working-memory/
+Claude/sparc-fleet-link/inbox.md
+# Plan/spec payloads delivered ALONGSIDE a fleet-link message. Device-local for the
+# same reason inbox.md is: they are snapshots of a living document that lives on
+# another device, and a TRACKED second copy is one that drifts silently on every
+# clone. (readme.md stays tracked so the folder exists on every clone.)
+Claude/sparc-fleet-link/*.plan.md
