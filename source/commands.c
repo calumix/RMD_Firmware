@@ -5,6 +5,7 @@
  *      Author: slocke
  */
 //#include <string.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include "FreeRTOS.h"
@@ -16,6 +17,7 @@
 #include "peripherals.h"
 #include <math.h>
 #include "channel.h"
+#include "isp.h"
 
 /*
  * Echos the first argument back (for testing)
@@ -152,13 +154,66 @@ int ChCommand(struct Command * cmd,struct Message * msg,int argc, char * argv[])
 		return 1;
 	}
 	isolate = ChannelGetState(ch,&st);
+	/* Range 0 is not a real range (1/10/100/1000): it says this channel's IO
+	 * expander (or, rarely, its bias pot) did not answer the read-back, so the
+	 * bias and TIA gain reported here would be inventions. A channel with no
+	 * expander at all is also held isolated ("off"). Same field count as always,
+	 * so no parser downstream sees a new shape. */
 	MessageSendFormat(msg,"%s,%u,%s,%f,%u",cmd->str,
 			ch+1,
 			isolate ? "off" : "on",
-			st.voltage,
-			ChannelRangeNumToUa(st.range)
+			st.io_exp_ok ? st.voltage : 0.0f,
+			st.io_exp_ok ? ChannelRangeNumToUa(st.range) : 0
 			);
 	return 0;
+}
+
+/*
+ * Report which IO expander ChannelInit found for each channel, so a board whose
+ * expanders sit at an unexpected address, or are missing, says so instead of
+ * streaming numbers with an unknown scale. Purely additive to the protocol.
+ * IOEXP
+ * -> IOEXP,0x20,0x21,0x22,0x23   TCA9554 fitted
+ * -> IOEXP,0x38,0x39,0x3A,0x3B   TCA9554A fitted
+ * -> IOEXP,NONE,...              no expander answered on that channel
+ */
+int IoExpCommand(struct Command * cmd,struct Message * msg,int argc, char * argv[]){
+	char fields[NUM_CHANNELS][5];
+	uint8_t addr;
+	int i;
+
+	/* The format string below spells out one %s per channel. */
+	_Static_assert(NUM_CHANNELS == 4, "IOEXP reply format hard-codes four channels");
+
+	for(i=0;i<NUM_CHANNELS;i++){
+		addr = ChannelIoExpAddress(i);
+		if(addr) snprintf(fields[i],sizeof(fields[i]),"0x%02X",addr);
+		else strncpy(fields[i],"NONE",sizeof(fields[i]));
+	}
+	MessageSendFormat(msg,"%s,%s,%s,%s,%s",cmd->str,fields[0],fields[1],fields[2],fields[3]);
+	return 0;
+}
+
+/*
+ * Hand the board to the ROM bootloader so new firmware can be flashed with blhost over the
+ * same USB cable, without the bootload jumper (JP1). After the ack the CDC port disappears
+ * and the board re-enumerates as the ROM's USB HID device (VID 0x1FC9, PID 0x0022); blhost
+ * `reset`, or a power cycle, boots whatever is in flash. The second word is deliberate: a
+ * bare ISP must never be enough to take a measuring board away from its operator.
+ * ISP,ENTER
+ * -> ISP,ENTER,OK   then the port is gone
+ * -> ISP,?          anything else, and nothing happens
+ */
+int IspCommand(struct Command * cmd,struct Message * msg,int argc, char * argv[]){
+	if(argc != 2 || strcmp(argv[1],"ENTER") != 0){
+		MessageSendFormat(msg,"%s,?",cmd->str);
+		return 0;
+	}
+	MessageSendFormat(msg,"%s,%s,OK",cmd->str,argv[1]);
+	/* Let DataTxTask and the USB stack push the ack out before the port is torn down. */
+	vTaskDelay(pdMS_TO_TICKS(200));
+	IspEnterRomBootloader();
+	return 0;	/* not reached */
 }
 
 /*
@@ -170,6 +225,8 @@ static struct Command commands[] = {
 		{"VER",VerCommand},
 		{"ENV",EnvCommand},
 		{"CH",ChCommand},
+		{"IOEXP",IoExpCommand},
+		{"ISP",IspCommand},
 		//{"SN",SNCommand},
 
 };

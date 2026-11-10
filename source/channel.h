@@ -48,6 +48,10 @@ struct channel {
 	struct tca9554 io_exp;
 	struct ad5258 pot;
 	bool isolate;
+	/* The IO expander answered at init (io_exp.address holds where). The relay,
+	 * the bias polarity and the TIA gain all hang off it, so a channel without
+	 * one is held isolated for good and never streams -- see ChannelSetState. */
+	bool io_exp_ok;
 };
 
 #define NUM_CHANNELS 4
@@ -71,11 +75,18 @@ extern struct range_map ranges[NUM_RANGES];
 struct channel_state {
 	float voltage;
 	enum channel_range range;
+	/* Read-back only (ChannelGetState). 0 means the channel's IO expander, or its
+	 * bias pot, did not answer, so voltage and range above are placeholders, not
+	 * read-backs; the CH ack then reports range 0, which is not a real range.
+	 * (A dead POT shows here while IOEXP still names the expander's address.) */
+	bool io_exp_ok;
 };
 
 void ChannelInit(void);
 void ChannelSetState(uint8_t channel_num, const struct channel_state *state,bool isolate);
 int ChannelGetState(uint8_t channel_num, struct channel_state *state);
+/* I2C address the init probe found this channel's IO expander at, or 0 if none answered. */
+uint8_t ChannelIoExpAddress(uint8_t channel_num);
 enum channel_range ChannelRangeUaToNum(uint16_t ua);
 uint16_t ChannelRangeNumToUa(enum channel_range r);
 float ChannelRangeNumToScale(enum channel_range r);
