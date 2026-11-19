@@ -120,8 +120,8 @@ uint8_t g_UsbDeviceDescriptor[] = {
     0x01,
     /* Index of string descriptor describing product */
     0x02,
-    /* Index of string descriptor describing the device's serial number */
-	//TODO: Build SN string
+    /* Index of string descriptor describing the device's serial number. 0 (none) until
+     * USB_DeviceSetSerialNumber() fills the string in at boot and sets this to its index. */
     0x00,
     /* Number of possible configurations */
     USB_DEVICE_CONFIGURATION_COUNT,
@@ -274,12 +274,20 @@ uint8_t g_UsbDeviceString3[] = {2U + 2U * 7U, USB_DESCRIPTOR_TYPE_STRING,
                                 'M',           0,
 };
 
+/* The serial number: the board's ID. Only its two header bytes are known at build time;
+ * USB_DeviceSetSerialNumber() writes the characters at boot. */
+USB_DMA_INIT_DATA_ALIGN(USB_DATA_ALIGN_SIZE)
+uint8_t g_UsbDeviceString4[2U + 2U * USB_DEVICE_SERIAL_CHARS] = {2U + 2U * USB_DEVICE_SERIAL_CHARS,
+                                                                 USB_DESCRIPTOR_TYPE_STRING};
+
 uint8_t *g_UsbDeviceStringDescriptorArray[USB_DEVICE_STRING_COUNT] = {g_UsbDeviceString0, g_UsbDeviceString1,
-                                                                      g_UsbDeviceString2, g_UsbDeviceString3};
+                                                                      g_UsbDeviceString2, g_UsbDeviceString3,
+                                                                      g_UsbDeviceString4};
 
 /* Define string descriptor size */
 uint32_t g_UsbDeviceStringDescriptorLength[USB_DEVICE_STRING_COUNT] = {
-    sizeof(g_UsbDeviceString0), sizeof(g_UsbDeviceString1), sizeof(g_UsbDeviceString2),sizeof(g_UsbDeviceString3)};
+    sizeof(g_UsbDeviceString0), sizeof(g_UsbDeviceString1), sizeof(g_UsbDeviceString2),sizeof(g_UsbDeviceString3),
+    sizeof(g_UsbDeviceString4)};
 usb_language_t g_UsbDeviceLanguage[USB_DEVICE_LANGUAGE_COUNT] = {{
     g_UsbDeviceStringDescriptorArray,
     g_UsbDeviceStringDescriptorLength,
@@ -296,6 +304,22 @@ usb_language_list_t g_UsbDeviceLanguageList = {
 /*******************************************************************************
  * Code
  ******************************************************************************/
+/* Offset of iSerialNumber in the 18-byte device descriptor (USB 2.0, table 9-8). */
+#define USB_DEVICE_DESCRIPTOR_ISERIAL_OFFSET (16U)
+
+void USB_DeviceSetSerialNumber(const char *text)
+{
+    uint32_t i;
+
+    /* A string descriptor is UTF-16LE: each ASCII character, then a zero byte. */
+    for (i = 0U; i < USB_DEVICE_SERIAL_CHARS; i++)
+    {
+        g_UsbDeviceString4[2U + 2U * i]      = (uint8_t)text[i];
+        g_UsbDeviceString4[2U + 2U * i + 1U] = 0U;
+    }
+    g_UsbDeviceDescriptor[USB_DEVICE_DESCRIPTOR_ISERIAL_OFFSET] = USB_DEVICE_SERIAL_STRING_INDEX;
+}
+
 /*!
  * @brief USB device get device descriptor function.
  *
@@ -372,6 +396,12 @@ usb_status_t USB_DeviceGetStringDescriptor(usb_device_handle handle,
         }
 
         if (USB_DEVICE_STRING_COUNT == languageIndex)
+        {
+            return kStatus_USB_InvalidRequest;
+        }
+        /* The serial number string exists only on a board that published one. */
+        if ((USB_DEVICE_SERIAL_STRING_INDEX == languageIndex) &&
+            (0U == g_UsbDeviceDescriptor[USB_DEVICE_DESCRIPTOR_ISERIAL_OFFSET]))
         {
             return kStatus_USB_InvalidRequest;
         }

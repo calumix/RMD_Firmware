@@ -6,7 +6,6 @@
  */
 #include <stdarg.h>
 #include <stdio.h>
-#include <ctype.h>
 #include <string.h>
 #include "FreeRTOS.h"
 #include "message.h"
@@ -82,7 +81,11 @@ int MessageProcess(struct Message * msg, unsigned char * data, int len){
 				}else if(data[i] == '\b'){
 					if(msg->wr_index != 0) msg->wr_index--;
 				}else if(msg->wr_index < MAX_MESSAGE_LEN){
-					msg->message[msg->wr_index++]=toupper(data[i]);
+					/* Stored exactly as it arrived. A command's checksum covers the
+					 * bytes as sent, lower case included, so no letter may change
+					 * before the checksum has been checked: HandleMessage does that
+					 * first and only then turns the letters to upper case. */
+					msg->message[msg->wr_index++]=data[i];
 				}
 
 				break;

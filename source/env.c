@@ -14,6 +14,17 @@
 environment_t env;
 #define EEPROM_I2C_ADDR 	(0x50)
 #define EEPROM_PAGE_SIZE	32
+/*
+ * The chip takes a TWO-byte address, high byte first, as the comment in
+ * EEPROMWritePage and the 32-byte page size always said. Until 2.0.0 this file
+ * sent one byte. The chip then took the first DATA byte as the low half of the
+ * address, so a save went somewhere other than address 0, and a read sent only
+ * half an address and returned whatever the chip pointed at: ENV,SAVE answered
+ * OK and ENV,LOAD never got the values back. Proved on a 2026-batch board on
+ * 2026-11-19: the chip answers at 0x50, and bytes written at 0x0100 and 0x0200
+ * with two-byte addresses read back from those two addresses and nowhere else.
+ */
+#define EEPROM_ADDR_BYTES	2
 //used internally to write a single page (or less).  That means that addr has to be aligned to EEPROM_PAGE_SIZE bytes for this to work correctly
 static int EEPROMWritePage(uint16_t addr, uint8_t * buff, uint32_t bytes){
 	int status;
@@ -25,7 +36,7 @@ static int EEPROMWritePage(uint16_t addr, uint8_t * buff, uint32_t bytes){
      * This must, however, match how the bootloader addresses EEPROM.  To keep it simple, we follow the datasheet recommended way (high byte of address first)
      * */
     masterXfer.subaddress     = addr;
-    masterXfer.subaddressSize = 1;
+    masterXfer.subaddressSize = EEPROM_ADDR_BYTES;
     masterXfer.data           = buff;
     masterXfer.dataSize       = bytes;
     masterXfer.flags          = kI2C_TransferDefaultFlag;
@@ -52,7 +63,7 @@ static int EEPROM_WriteArray(uint16_t addr, uint8_t * buff, uint32_t bytes){
 		bytes -= write_len;
 		addr += write_len;
 	}
-	return bytes;
+	return 1;
 }
 
 static int EEPROM_ReadArray(uint16_t addr, uint8_t * buff, uint32_t bytes){
@@ -62,7 +73,7 @@ static int EEPROM_ReadArray(uint16_t addr, uint8_t * buff, uint32_t bytes){
     masterXfer.slaveAddress   = EEPROM_I2C_ADDR;
     masterXfer.direction      = kI2C_Read;
     masterXfer.subaddress     = addr;
-    masterXfer.subaddressSize = 1;
+    masterXfer.subaddressSize = EEPROM_ADDR_BYTES;
     masterXfer.data           = buff;
     masterXfer.dataSize       = bytes;
     masterXfer.flags          = kI2C_TransferDefaultFlag;
@@ -73,6 +84,17 @@ static int EEPROM_ReadArray(uint16_t addr, uint8_t * buff, uint32_t bytes){
     }
 
     return bytes;
+}
+
+/* For the other small records kept on this chip (board_number.c). Each returns
+ * 1 when the I2C transfers were acknowledged and 0 when one was not; a write is
+ * only proved by reading it back. The environment itself lives at address 0. */
+int EepromWrite(uint16_t addr, uint8_t * buff, uint32_t bytes){
+	return EEPROM_WriteArray(addr,buff,bytes);
+}
+
+int EepromRead(uint16_t addr, uint8_t * buff, uint32_t bytes){
+	return EEPROM_ReadArray(addr,buff,bytes) ? 1 : 0;
 }
 
 static uint16_t EnvCRC(void){

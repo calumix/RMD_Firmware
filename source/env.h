@@ -33,4 +33,9 @@ void EnvInit(void);
 void EnvSetDefaults(void);
 void EnvWrite(void);
 
+/* Raw access to the settings EEPROM for records other than the environment
+ * (which is at address 0). 1 = the chip acknowledged, 0 = it did not. */
+int EepromWrite(uint16_t addr, uint8_t * buff, uint32_t bytes);
+int EepromRead(uint16_t addr, uint8_t * buff, uint32_t bytes);
+
 #endif /* ENV_H_ */
