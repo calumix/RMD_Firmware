@@ -87,6 +87,12 @@ void ChannelSetState(uint8_t channel_num, const struct channel_state *state,bool
 int ChannelGetState(uint8_t channel_num, struct channel_state *state);
 /* I2C address the init probe found this channel's IO expander at, or 0 if none answered. */
 uint8_t ChannelIoExpAddress(uint8_t channel_num);
+/* The LEDs (channel.c says how they are wired). ChannelSetLeds returns 0 when the
+ * channel has no expander or it did not answer; ChannelLedsRest puts every
+ * channel back to green lit, red dark. */
+bool ChannelAnyOn(void);
+int ChannelSetLeds(uint8_t channel_num, bool green, bool red);
+void ChannelLedsRest(void);
 enum channel_range ChannelRangeUaToNum(uint16_t ua);
 uint16_t ChannelRangeNumToUa(enum channel_range r);
 float ChannelRangeNumToScale(enum channel_range r);

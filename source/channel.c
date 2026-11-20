@@ -383,6 +383,9 @@ void ChannelInit(void){
 	int i;
 	int32_t val;
 
+	/* The lock every expander output change takes, before the first change. */
+	tca9554_init();
+
 	/* We share the SPI device between both the measurement and RTD adc, so only one init */
 	mcp3551_init(&spi_dev);
 
@@ -451,6 +454,48 @@ void ChannelInit(void){
 uint8_t ChannelIoExpAddress(uint8_t channel_num){
 	if(channel_num >= NUM_CHANNELS) return 0;
 	return channels[channel_num].io_exp_ok ? channels[channel_num].io_exp.address : 0;
+}
+
+/*
+ * The LEDs. Each channel has a green and a red one on two pins of its IO
+ * expander, the chip whose other pins drive that channel's relay, bias polarity
+ * and range. Both are lit by driving the pin LOW. Every change here is one
+ * read-modify-write under the expander lock, so it can never put back another
+ * pin of the chip (tca9554.c).
+ */
+
+/* Is any channel on, and so being measured? */
+bool ChannelAnyOn(void){
+	int i;
+	for(i=0;i<NUM_CHANNELS;i++){
+		if(!channels[i].isolate) return true;
+	}
+	return false;
+}
+
+/* Light or darken one channel's two LEDs. Returns 0 when the channel has no
+ * expander, or its expander did not answer. */
+int ChannelSetLeds(uint8_t channel_num, bool green, bool red){
+	struct channel * ch;
+	uint8_t high = 0;
+	uint8_t low = 0;
+
+	if(channel_num >= NUM_CHANNELS) return 0;
+	ch = &channels[channel_num];
+	if(!ch->io_exp_ok) return 0;
+
+	if(green) low |= IO_EXP_LED_Gn; else high |= IO_EXP_LED_Gn;
+	if(red) low |= IO_EXP_LED_Rn; else high |= IO_EXP_LED_Rn;
+	return tca9554_update(&ch->io_exp,high,low);
+}
+
+/* The resting state ChannelInit leaves: green lit on every channel that has an
+ * expander ("this channel is alive"), red dark. */
+void ChannelLedsRest(void){
+	int i;
+	for(i=0;i<NUM_CHANNELS;i++){
+		ChannelSetLeds(i,true,false);
+	}
 }
 
 

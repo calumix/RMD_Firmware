@@ -99,8 +99,14 @@
 
 /* Configuration, interface and endpoint. */
 #define USB_DEVICE_CONFIGURATION_COUNT (1U)
-#define USB_DEVICE_STRING_COUNT        (4U)
+#define USB_DEVICE_STRING_COUNT        (5U)
 #define USB_DEVICE_LANGUAGE_COUNT      (1U)
+
+/* The serial number string: the board's ID, 32 hexadecimal digits (board_id.h).
+ * It is string 4, and the device descriptor names it only once
+ * USB_DeviceSetSerialNumber() has filled it in. */
+#define USB_DEVICE_SERIAL_STRING_INDEX (4U)
+#define USB_DEVICE_SERIAL_CHARS        (32U)
 
 #define USB_CDC_VCOM_CONFIGURE_INDEX (1U)
 
@@ -178,6 +184,17 @@
  * @return A USB error code or kStatus_USB_Success.
  */
 extern usb_status_t USB_DeviceSetSpeed(usb_device_handle handle, uint8_t speed);
+/*!
+ * @brief Publish a USB serial number.
+ *
+ * Fills in the serial number string and points the device descriptor at it. Call it before the device is run,
+ * with exactly USB_DEVICE_SERIAL_CHARS characters. A device this is never called for publishes no serial number
+ * at all (iSerialNumber stays 0), which is what a board that could not read its ID must do: Windows mishandles
+ * two devices that claim the same serial number.
+ *
+ * @param text USB_DEVICE_SERIAL_CHARS ASCII characters; need not be null terminated.
+ */
+extern void USB_DeviceSetSerialNumber(const char *text);
 /*!
  * @brief USB device get device descriptor function.
  *

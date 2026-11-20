@@ -27,6 +27,9 @@
 #include "env.h"
 #include "adc.h"
 #include "channel.h"
+#include "board_id.h"
+#include "board_number.h"
+#include "blink.h"
 /*
  * Allocating this here (instead of letting the driver allocate it) is a workaround
  * for a bug in the driver/code generator. If the driver allocats this, it puts it in the normal SRAM bank
@@ -114,6 +117,14 @@ void FreeRTOSRuntimeCounterInit(void){
 void InitTask(void*params){
 	EnvInit();
 
+	/* The board's permanent ID, before USB starts: USBInit publishes it as the
+	 * USB serial number, and the PC reads that while the board enumerates. */
+	BoardIdInit();
+
+	/* The board's sticker number, from the settings EEPROM (after EnvInit, on
+	 * the same I2C bus). */
+	BoardNumberInit();
+
 	ChannelInit();
 
 	/* The command parser will create a queue (to post commands to be parsed to) and kick off it's thread */
@@ -146,6 +157,10 @@ void InitTask(void*params){
 
     xTaskCreate(MeasTask,"MEAS",384,(void*)tx_queue,0,NULL);
     xTaskCreate(RTDTask,"RTD",384,(void*)tx_queue,0,NULL);
+
+    /* The task that flashes the LEDs on $POEI,BLINK. Last on purpose: it is the
+     * one task the board can do without (blink.c). */
+    BlinkInit();
 
 	vTaskDelete(NULL);
 }

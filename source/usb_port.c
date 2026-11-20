@@ -22,6 +22,7 @@
 #include "board.h"
 #include "fsl_power.h"
 #include "usb_phy.h"
+#include "board_id.h"
 
 extern usb_device_endpoint_struct_t g_UsbDeviceCdcVcomDicEndpoints[];
 extern usb_device_class_struct_t g_UsbDeviceCdcVcomConfig;
@@ -45,6 +46,8 @@ typedef struct _usb_cdc_vcom_struct
 
 usb_status_t USB_DeviceCdcVcomCallback(class_handle_t handle, uint32_t event, void *param);
 usb_status_t USB_DeviceCallback(usb_device_handle handle, uint32_t event, void *param);
+static bool USBLinkReady(void);
+static void USBLinkDown(void);
 
 /* USB device class information */
 static usb_device_class_config_struct_t s_cdcAcmConfig[1] = {{
@@ -148,18 +151,69 @@ void USBTxTask(void * params){
 		 * Wait for data to send
 		 */
 		bytes = xStreamBufferReceive(s_cdcVcom.txStream,(void*)s_currSendBuf,g_UsbDeviceCdcVcomDicEndpoints[1].maxPacketSize,portMAX_DELAY);
-		if(bytes > 0 && s_cdcVcom.startTransactions){
-			/*
-			 * FIXME: there may be an issue here. If we fail to send for some reason, the next time through
-			 * the loop we'll wait for a task notification, but since nothing was queued to send, the ISR
-			 * will never give the notification. Not sure if this can actually happen -- would require
-			 * a failure to send that was NOT due to the endpoint being busy.
-			 */
-			ulTaskNotifyTake(pdTRUE,portMAX_DELAY);
-			err = USB_DeviceCdcAcmSend(s_cdcVcom.cdcAcmHandle, USB_CDC_VCOM_BULK_IN_ENDPOINT,s_currSendBuf,bytes);
-			configASSERT(err == kStatus_USB_Success);
+		if(bytes == 0 || !USBLinkReady()){
+			/* Nothing to send, or nobody to send it to: the data is dropped. */
+			continue;
 		}
 
+		/*
+		 * Wait for the endpoint to be free. The task notification is that one token: it is
+		 * taken here before a send, and given back when the send has finished (the
+		 * kUSB_DeviceCdcEventSendResponse callback) or when the link to the PC has gone
+		 * (USBLinkDown). The wait has no limit on purpose: with the port closed on the PC the
+		 * send before this one simply stays pending, and everything behind it waits its turn.
+		 */
+		ulTaskNotifyTake(pdTRUE,portMAX_DELAY);
+		if(!USBLinkReady()){
+			/*
+			 * Woken by USBLinkDown, not by a finished send: the PC reset the link while this
+			 * data waited. Before 2.0.0 nothing woke this task then, the send it waited for
+			 * was thrown away by the reset, and the board never sent another byte until it
+			 * was power cycled -- every other task backed up behind this one, commands
+			 * included. What is held here is stale: drop it. After a reset nothing is in
+			 * flight, so the endpoint is free: put the token back.
+			 */
+			xTaskNotifyGive(s_cdcVcom.txTaskHandle);
+			continue;
+		}
+
+		err = USB_DeviceCdcAcmSend(s_cdcVcom.cdcAcmHandle, USB_CDC_VCOM_BULK_IN_ENDPOINT,s_currSendBuf,bytes);
+		if(err != kStatus_USB_Success){
+			/*
+			 * Not sent, so no callback will give the token back: give it back here, and drop
+			 * the data. (This used to be a configASSERT, which stops the whole board with its
+			 * interrupts off; a send refused because the link went down between the check
+			 * above and this call must not do that.)
+			 */
+			xTaskNotifyGive(s_cdcVcom.txTaskHandle);
+		}
+	}
+}
+
+/*
+ * Is there a PC to send to? The board is set up by a PC (attach, cleared by every bus reset and
+ * set again when the PC configures the board) and a program has opened the port at least once
+ * since power-up (startTransactions, which is never cleared: a PC that resets the link and sets
+ * the board up again, as one does when it wakes from sleep, gets its data back without having to
+ * open the port a second time).
+ */
+static bool USBLinkReady(void){
+	return (1U == s_cdcVcom.attach) && (1U == s_cdcVcom.startTransactions);
+}
+
+/*
+ * The link to the PC has gone: a bus reset, or the PC took the board's configuration away. A
+ * cable pulled between a powered hub and the PC shows up here as the bus reset when the cable
+ * goes back in; the board never lost power and never restarted. Whatever was being sent is
+ * lost with the reset and its callback will not come, so the sending task is released from its
+ * wait here. Called from the USB interrupt, after `attach` has been cleared.
+ */
+static void USBLinkDown(void){
+	BaseType_t wake = pdFALSE;
+
+	if(s_cdcVcom.txTaskHandle != NULL){
+		vTaskNotifyGiveFromISR(s_cdcVcom.txTaskHandle,&wake);
+		portYIELD_FROM_ISR(wake);
 	}
 }
 
@@ -202,6 +256,9 @@ usb_status_t USB_DeviceCallback(usb_device_handle handle, uint32_t event, void *
             {
                 USB_DeviceSetSpeed(handle, s_cdcVcom.speed);
             }
+
+            /* The reset threw away whatever was being sent: release the sending task. */
+            USBLinkDown();
         }
         break;
 #if (defined(USB_DEVICE_CONFIG_DETACH_ENABLE) && (USB_DEVICE_CONFIG_DETACH_ENABLE > 0U))
@@ -212,6 +269,8 @@ usb_status_t USB_DeviceCallback(usb_device_handle handle, uint32_t event, void *
             USB_DeviceDisconnected();
 #endif
 #endif
+            s_cdcVcom.attach = 0;
+            USBLinkDown();
             error = kStatus_USB_Success;
         }
         break;
@@ -222,6 +281,8 @@ usb_status_t USB_DeviceCallback(usb_device_handle handle, uint32_t event, void *
                 s_cdcVcom.attach               = 0;
                 s_cdcVcom.currentConfiguration = 0U;
                 error                          = kStatus_USB_Success;
+                /* The PC took the configuration away: the endpoints are gone with it. */
+                USBLinkDown();
             }
             else if (USB_CDC_VCOM_CONFIGURE_INDEX == (*temp8))
             {
@@ -347,6 +408,16 @@ usb_status_t USB_DeviceCdcVcomCallback(class_handle_t handle, uint32_t event, vo
     {
         case kUSB_DeviceCdcEventSendResponse:
         {
+            if (USB_CANCELLED_TRANSFER_LENGTH == epCbParam->length)
+            {
+                /* Not a finished send: the stack cancelled it (it does when it tears the
+                 * endpoint down). Nothing is in flight any more, so the endpoint is free: give
+                 * the token back whatever the link's state, or the sending task waits for good.
+                 * Without this test the length (0xFFFFFFFF) went on into the arithmetic below. */
+                vTaskNotifyGiveFromISR(s_cdcVcom.txTaskHandle,&wake);
+                portYIELD_FROM_ISR(wake);
+                break;
+            }
             if ((epCbParam->length != 0) &&
                 (0U == (epCbParam->length % g_UsbDeviceCdcVcomDicEndpoints[0].maxPacketSize)))
             {
@@ -355,6 +426,13 @@ usb_status_t USB_DeviceCdcVcomCallback(class_handle_t handle, uint32_t event, vo
                  ** data, so it can flush the output.
                  */
                 error = USB_DeviceCdcAcmSend(handle, USB_CDC_VCOM_BULK_IN_ENDPOINT, NULL, 0);
+                if (kStatus_USB_Success != error)
+                {
+                    /* The empty packet was refused, so no callback will follow it: the endpoint
+                     * is free now, and the sending task must be told so. */
+                    vTaskNotifyGiveFromISR(s_cdcVcom.txTaskHandle,&wake);
+                    portYIELD_FROM_ISR(wake);
+                }
             }
             else if ((1U == s_cdcVcom.attach) && (1U == s_cdcVcom.startTransactions))
             {
@@ -372,6 +450,13 @@ usb_status_t USB_DeviceCdcVcomCallback(class_handle_t handle, uint32_t event, vo
         break;
         case kUSB_DeviceCdcEventRecvResponse:
         {
+            if (USB_CANCELLED_TRANSFER_LENGTH == epCbParam->length)
+            {
+                /* A cancelled receive carries no data, and its length (0xFFFFFFFF) must never
+                 * reach the stream buffer below as a byte count. The receive is scheduled again
+                 * when the PC next configures the board (kUSB_DeviceEventSetConfiguration). */
+                break;
+            }
             if ((1U == s_cdcVcom.attach) && (1U == s_cdcVcom.startTransactions))
             {
                 /* Save the received data length, the data will be handled in USB_DeviceCdcVcomTask. Certainly, the
@@ -441,6 +526,14 @@ usb_status_t USB_DeviceCdcVcomCallback(class_handle_t handle, uint32_t event, vo
 }
 
 void USBInit(StreamBufferHandle_t * tx, StreamBufferHandle_t * rx){
+    /* The board's ID is its USB serial number, so the PC knows which board is which before it
+     * opens a port, and keeps a board's COM number when the board moves to another socket.
+     * A board that could not read its ID publishes no serial number at all, as firmware before
+     * 2.0.0 did: two boards claiming the same all-zero number would be mishandled by Windows. */
+    if(BoardIdValid()){
+        USB_DeviceSetSerialNumber(BoardIdHex());
+    }
+
     NVIC_ClearPendingIRQ(USB1_IRQn);
     NVIC_ClearPendingIRQ(USB1_NEEDCLK_IRQn);
 

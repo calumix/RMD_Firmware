@@ -24,5 +24,11 @@ int tca9554_write(struct tca9554 * dev, uint8_t io);
 int tca9554_direction(struct tca9554 * dev, uint8_t direction);
 int tca9554_set(struct tca9554 * dev, uint8_t mask);
 int tca9554_clear(struct tca9554 * dev, uint8_t mask);
+/* Both at once, in one read-modify-write: set_mask pins high, clear_mask pins low. */
+int tca9554_update(struct tca9554 * dev, uint8_t set_mask, uint8_t clear_mask);
+
+/* Creates the lock that every output change takes (tca9554.c says why). Call it
+ * once, with the kernel running, before any other call here. */
+void tca9554_init(void);
 
 #endif /* TCA9554_H_ */
